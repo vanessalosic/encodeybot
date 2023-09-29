@@ -1,0 +1,205 @@
+require('dotenv').config();
+import { Client } from 'discord.js';
+
+const { Client } = require('discord.js');
+const Airtable = require('airtable');
+
+const TOKEN = process.env.DISCORD_BOT_TOKEN;
+const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
+const BASE_ID = 'appzkHRoEnDjCINH7'; 
+
+const client = new Client();
+
+const base = new Airtable({ apiKey: AIRTABLE_API_KEY }).base(BASE_ID);
+
+client.on('ready', () => {
+  console.log(`Logged in as ${client.user?.tag}!`);
+});
+
+client.on('message', async (message) => {
+    if (message.author.bot) return;
+//... (rest of your code imports and initializations)
+
+
+    // Check and update programmes based on user's roles
+    const memberRoles = message.member.roles.cache.map(role => role.name);  // Get an array of role names of the member
+    const allPrograms = await base('Programmes').select({}).firstPage();  // Fetch all programmes from Airtable
+    const userMatchingPrograms = allPrograms.filter(program => memberRoles.includes(program.fields.ProgramName)).map(program => program.fields.ProgramName);
+
+    // Fetch user record
+    const userRecords = await base('users').select({
+        filterByFormula: `{UserId} = '${message.author.id}'`
+    }).firstPage();
+
+    // Update the user's programmes based on roles if user exists in the database
+    if (userRecords && userRecords.length > 0) {
+        const existingPrograms = userRecords[0].fields.Programmes || [];
+        const updatedPrograms = Array.from(new Set([...existingPrograms, ...userMatchingPrograms]));  // Combine and de-duplicate
+
+        await base('users').update([{
+            id: userRecords[0].id,
+            fields: {
+                Programmes: updatedPrograms
+            }
+        }]);
+    } else {
+        // If user doesn't exist, create a new record
+        await base('users').create([{
+            fields: {
+                UserId: message.author.id,
+                Programmes: userMatchingPrograms
+            }
+        }]);
+    }
+
+    //... (rest of your commands like !reminder, !addProgram, etc.)
+//... (rest of your command checks)
+
+// Command: !programInfo [programName]
+if (message.content.startsWith('!programInfo')) {
+    const programName = message.content.slice(12).trim();
+    
+    // Check if program exists
+    const programInfo = await base('Programmes').select({
+        filterByFormula: `{ProgramName} = '${programName}'`
+    }).firstPage();
+
+    if (!programInfo || programInfo.length === 0) {
+        message.channel.send("That programme doesn't exist. Please make sure you've entered the correct programme name.");
+        return;
+    }
+
+    const programDetails = programInfo[0].fields;
+    let responseMessage = `**Details for ${programDetails.ProgramName}**\n\n`;
+    
+    for (let key in programDetails) {
+        if (key !== 'ProgramName') {  // Exclude ProgramName as it's already mentioned above
+            responseMessage += `- **${key}**: ${programDetails[key]}\n`;
+        }
+    }
+
+    message.channel.send(responseMessage);
+    return;
+}
+
+//... (rest of your commands and code)
+
+
+    //... (other commands you've written)
+
+    // Command: !events
+    if (message.content.startsWith('!events')) {
+        // Fetch user records
+        const userRecords = await base('users').select({
+            filterByFormula: `{UserId} = '${message.author.id}'`
+        }).firstPage();
+
+        // If user not registered
+        if (!userRecords || userRecords.length === 0) {
+            message.channel.send("You're not registered for any programmes. Use `!addProgram [programName]` to add programmes.");
+            return;
+        }
+
+        const userPrograms = userRecords[0].fields.Programmes;
+        let responseMessage = 'Upcoming events for your programmes:\n\n';
+
+        for (let program of userPrograms) {
+            const programDetails = await base('Programmes').select({
+                filterByFormula: `{ProgramName} = '${program}'`
+            }).firstPage();
+
+            if (programDetails.length > 0) {
+                const details = programDetails[0].fields;
+                responseMessage += `- **${details.ProgramName}**\n`;
+                if (details.UpcomingEvents) {  // Assuming a column named UpcomingEvents contains the event details
+                    responseMessage += `  Events: ${details.UpcomingEvents}\n\n`;
+                } else {
+                    responseMessage += `  No events listed currently.\n\n`;
+                }
+            }
+        }
+
+        message.channel.send(responseMessage);
+        return;
+    }
+
+    //... (rest of your command handlers)
+});
+
+//... (rest of your code)
+
+    // Basic command: !reminder
+    if (message.content.startsWith('!reminder')) {
+      const args = message.content.split(' ').slice(1);
+      message.channel.send(`Reminder set for ${args.join(' ')}!`);
+      return;
+    }
+  
+    // Basic Q&A matching
+    if (message.content.toLowerCase().includes('how do I register?')) {
+      message.channel.send('You can register at our website, encode.club/hackathons!');
+    }
+    const userRecords = await base('users').select({
+        filterByFormula: `{UserId} = '${message.author.id}'`
+    }).firstPage();
+
+    // First interaction with the bot
+    if (!userRecords || userRecords.length === 0) {
+        message.channel.send("Welcome! I have taken a look at your discord roles and curated a list of programmes you are interested in. Want to get details about other programmes? Please tell me which programmes you're interested in by using the format `!addProgram [programName]`. You can add multiple programmes one by one.");
+        return;
+    }
+
+    // Command: !addProgram
+    if (message.content.startsWith('!addProgram')) {
+        const programName = message.content.slice(11).trim();
+        
+        // Check if program exists
+        const programExists = await base('Programmes').select({
+            filterByFormula: `{ProgramName} = '${programName}'`
+        }).firstPage();
+
+        if (!programExists || programExists.length === 0) {
+            message.channel.send("That programme doesn't exist. Please make sure you've entered the correct programme name.");
+            return;
+        }
+
+        // Add the new program to user's existing programmes
+        const existingPrograms = userRecords[0].fields.Programmes || [];
+        base('users').update([{
+            id: userRecords[0].id,
+            fields: {
+                Programmes: [...existingPrograms, programName]
+            }
+        }]);
+        
+        message.channel.send(`The ${programName} programme has been added!`);
+        return;
+    }
+
+    // Detecting a new member joining the server
+client.on('guildMemberAdd', member => {
+    member.send("Welcome to our server! I'm your friendly bot. Use `!help` to see what I can do for you.");
+});
+
+    if (message.content.startsWith('!help')) {
+        message.channel.send(`
+    **Commands:**
+    - \`!events\`: Get upcoming events for your programmes.
+    - \`!ask [question]\`: Ask a question and I'll try to answer it from our FAQ.
+    - \`!addProgram [programName]\`: Add a program you're interested in.
+        `);
+    }
+    
+    // Remaining code...
+});
+const embed = new MessageEmbed()
+    .setTitle('Your Events')
+    .setColor(0xff0000)
+    .addField('Program Name', 'Event Details');
+message.channel.send(embed);
+
+client.login(TOKEN);
+
+
+
+
